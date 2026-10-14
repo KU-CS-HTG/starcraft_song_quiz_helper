@@ -1,6 +1,8 @@
 """여러 화면에서 같이 쓰는 컴포넌트."""
 from __future__ import annotations
 
+import logging
+import re
 from datetime import timezone
 
 import pandas as pd
@@ -14,6 +16,31 @@ from normalize import SongIndex, detect_language
 AUTO = "자동 감지"
 
 
+def _safe_error(e: Exception) -> str:
+    """예외 문장에서 접속 주소의 비밀번호와 DATABASE_URL 원문을 가린다."""
+    text = " ".join(str(getattr(e, "orig", None) or e).split())
+    text = re.sub(r"(://[^:/@\s]+:)[^@\s]+@", r"\1****@", text)
+    secret = get_secret("DATABASE_URL")
+    if secret:
+        text = text.replace(secret, "<DATABASE_URL>")
+    return text[:600]
+
+
+def _error_hint(detail: str) -> str:
+    low = detail.lower()
+    if "password authentication failed" in low:
+        return "💡 DB 비밀번호가 틀렸어요. [YOUR-PASSWORD] 대괄호까지 실제 비밀번호로 바꿨는지, 특수문자는 URL 인코딩했는지 확인하세요."
+    if "tenant or user not found" in low:
+        return "💡 사용자 이름(postgres.프로젝트ID)이나 pooler 지역 주소가 프로젝트와 달라요. Connect 화면의 URI를 그대로 복사하세요."
+    if "could not translate host name" in low or "name or service not known" in low:
+        return "💡 주소(호스트) 오타예요. Connect 화면의 URI를 다시 복사하세요."
+    if "network is unreachable" in low or "db." in low and "supabase.co" in low:
+        return "💡 Direct 주소(db.xxx.supabase.co)는 안 돼요. pooler.supabase.com 주소를 쓰세요."
+    if "timeout" in low or "timed out" in low:
+        return "💡 응답이 없어요. Supabase 프로젝트가 일시 중지(Paused)됐는지 확인하고 Restore 하세요."
+    return "💡 위 문장을 확인하세요. 프로젝트 일시 중지, 주소·비밀번호 오류가 가장 흔한 원인이에요."
+
+
 def need_engine():
     """DB 엔진을 돌려준다. 설정/연결 문제가 있으면 안내 메시지를 보여주고 이 화면만 멈춘다."""
     try:
@@ -21,9 +48,13 @@ def need_engine():
     except db.DBNotConfigured:
         st.warning("DATABASE_URL 이 설정되지 않았어요. Secrets 에 Supabase 연결 주소를 넣어 주세요. "
                    "(README 의 'DB 생성' 단계 참고)")
-    except Exception as e:  # 연결 실패: 주소/비밀번호가 노출되지 않도록 종류만 표시
+    except Exception as e:  # 연결 실패: 원인 문장은 보여주되 비밀번호는 가린다
+        detail = _safe_error(e)
+        logging.getLogger(__name__).error("DB 연결 실패: %s", detail)
         st.error(f"DB 에 연결하지 못했어요 ({type(e).__name__}). DATABASE_URL(비밀번호, 포트, "
                  "pooler 주소)을 확인해 주세요.")
+        st.code(detail, language=None)
+        st.caption(_error_hint(detail))
     st.stop()
 
 
