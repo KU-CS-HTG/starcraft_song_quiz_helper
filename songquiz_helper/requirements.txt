@@ -1,0 +1,8 @@
+streamlit>=1.50
+pandas
+rapidfuzz
+google-api-python-client
+anthropic
+psycopg2-binary
+sqlalchemy>=2.0
+openpyxl

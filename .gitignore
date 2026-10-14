@@ -1,0 +1,16 @@
+# 비밀값은 절대 커밋하지 않습니다
+.streamlit/secrets.toml
+secrets.toml
+.env
+
+# 파이썬 캐시/가상환경
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# SQLite 등 로컬 DB 파일 (이 앱은 사용하지 않지만 실수 방지)
+*.db
+*.sqlite
+*.sqlite3
