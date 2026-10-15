@@ -57,3 +57,11 @@ def test_no_headers_keeps_old_behavior():
     from parsers import parse_txt
     rows = parse_txt("A - B\n".encode())
     assert rows == [{"artist": "A", "title": "B"}]
+
+
+def test_txt_colon_lines_and_section_header_with_colon():
+    from parsers import parse_txt
+    txt = "한국어:\n아이유: 좋은 날\n방탄소년단 : Dynamite\n영어:\nColdplay:Yellow\n"
+    rows = parse_txt(txt.encode())
+    assert [(r["artist"], r["title"], r["language"]) for r in rows] == [
+        ("아이유", "좋은 날", "ko"), ("방탄소년단", "Dynamite", "ko"), ("Coldplay", "Yellow", "en")]

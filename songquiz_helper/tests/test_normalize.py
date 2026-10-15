@@ -83,3 +83,14 @@ def test_parse_line_blank_artist_variants():
     assert parse_line("- 제목") == ("", "제목")
     assert parse_line("제목 -") == ("", "제목")
     assert parse_line("A-ha - Take On Me") == ("A-ha", "Take On Me")  # 단어 속 하이픈은 그대로
+
+
+def test_parse_line_colon_separator():
+    assert parse_line("BTS: Dynamite") == ("BTS", "Dynamite")
+    assert parse_line("BTS : Dynamite") == ("BTS", "Dynamite")
+    assert parse_line("아이유:좋은 날") == ("아이유", "좋은 날")      # 공백 없는 콜론
+    assert parse_line("아이유：좋은 날") == ("아이유", "좋은 날")      # 전각 콜론
+    assert parse_line("A - Title: Sub") == ("A", "Title: Sub")        # 먼저 나온 구분자 기준
+    assert parse_line("A: Title - Remix") == ("A", "Title - Remix")
+    assert parse_line("Re:Zero - 곡") == ("Re:Zero", "곡")            # 공백 없는 콜론은 하이픈보다 약함
+    assert parse_line("제목:") == ("", "제목") and parse_line(": 제목") == ("", "제목")

@@ -56,15 +56,26 @@ def normalize_text(s: str) -> str:
     return clean_text(s).replace(" ", "")
 
 
+# 가수/제목 구분자 후보: 공백 낀 하이픈, 공백이 붙은 콜론(": ", " :"), 전각 콜론(：)
+_SEP_SPACED = re.compile(r"\s[-–—]\s|\s*[:：]\s+|\s+[:：]\s*|[：]")
+_SEP_BARE_COLON = re.compile(r"[:：]")  # 공백 없는 "가수:제목" (다른 구분자가 없을 때만 사용)
+
+
 def parse_line(text: str) -> tuple[str, str]:
-    """"가수 - 제목" 형식을 (artist, title) 로 분리. 구분자가 없으면 artist 는 빈 문자열."""
+    """"가수 - 제목" / "가수: 제목" 형식을 (artist, title) 로 분리. 구분자가 없으면 artist 는 빈 문자열.
+
+    - 구분자: 공백 낀 하이픈(-, –, —), 콜론(:, ：). 둘이 같이 있으면 먼저 나오는 쪽으로 나눈다.
+      (예: "A - Title: Sub" → A / "Title: Sub",  "A: Title - Remix" → A / "Title - Remix")
+    - 공백 없는 콜론("가수:제목")은 다른 구분자가 없을 때만 구분자로 본다. ("Re:Zero - 곡" 은 하이픈 기준)
+    - 가수만 비우고 구분자를 남긴 줄("- 제목", ": 제목", "제목 -", "제목:")도 처리한다.
+    """
     text = (text or "").strip()
-    lead = re.match(r"[-–—]\s+", text)  # "- 제목": 가수만 비우고 구분자는 남긴 경우
+    lead = re.match(r"(?:[-–—]|[:：])\s+", text)
     if lead:
         return "", text[lead.end():].strip()
-    if re.search(r"\s[-–—]$", text):  # "제목 -": 끝에 구분자만 남은 경우
-        return "", text[:-1].strip()
-    m = _SEP.search(text)
+    if re.search(r"\s[-–—]$|\s?[:：]$", text):
+        return "", re.sub(r"\s*[-–—:：]$", "", text).strip()
+    m = _SEP_SPACED.search(text) or _SEP_BARE_COLON.search(text)
     if not m:
         return "", text
     return text[: m.start()].strip(), text[m.end():].strip()

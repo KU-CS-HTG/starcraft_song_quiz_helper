@@ -10,7 +10,7 @@ def render():
     engine = common.need_engine()
 
     with st.form("search_form"):
-        q = st.text_input("가수 - 제목 (또는 아무 검색어)", placeholder="예: BTS - Dynamite")
+        q = st.text_input("가수 - 제목 (또는 아무 검색어)", placeholder="예: BTS - Dynamite  또는  BTS: Dynamite")
         submitted = st.form_submit_button("검색", type="primary")
     if submitted and q.strip():
         artist, title = parse_line(q)

@@ -12,7 +12,7 @@ from views import common
 
 def _upload_section(engine):
     st.subheader("파일 업로드")
-    up = st.file_uploader("CSV / XLSX / TXT (TXT 는 한 줄에 '가수 - 제목')",
+    up = st.file_uploader("CSV / XLSX / TXT (TXT 는 한 줄에 '가수 - 제목' 또는 '가수: 제목')",
                           type=["csv", "xlsx", "txt"], key=f"used_upload_{common.ver('used_upload')}")
     if not up:
         return
@@ -30,7 +30,7 @@ def _upload_section(engine):
             has_header = st.checkbox("첫 행은 컬럼명입니다", value=True)
             df = parsers.read_table(data, name, sheet, has_header)
             cols = list(df.columns)
-            single = st.checkbox("한 컬럼에 '가수 - 제목' 형태로 들어 있어요", value=False)
+            single = st.checkbox("한 컬럼에 '가수 - 제목'(또는 '가수: 제목') 형태로 들어 있어요", value=False)
             ai = parsers.guess_column(cols, parsers.ARTIST_HINTS)
             ti = parsers.guess_column(cols, parsers.TITLE_HINTS)
             title_col = st.selectbox("제목 컬럼" if not single else "'가수 - 제목' 컬럼", cols,
