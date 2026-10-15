@@ -59,6 +59,11 @@ def normalize_text(s: str) -> str:
 def parse_line(text: str) -> tuple[str, str]:
     """"가수 - 제목" 형식을 (artist, title) 로 분리. 구분자가 없으면 artist 는 빈 문자열."""
     text = (text or "").strip()
+    lead = re.match(r"[-–—]\s+", text)  # "- 제목": 가수만 비우고 구분자는 남긴 경우
+    if lead:
+        return "", text[lead.end():].strip()
+    if re.search(r"\s[-–—]$", text):  # "제목 -": 끝에 구분자만 남은 경우
+        return "", text[:-1].strip()
     m = _SEP.search(text)
     if not m:
         return "", text

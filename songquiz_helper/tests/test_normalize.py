@@ -75,3 +75,11 @@ def test_detect_language():
     assert detect_language("周杰倫", "晴天") == "기타"
     assert detect_language("YOASOBI", "アイドル") == "ja"
     assert detect_language("Coldplay", "Yellow") == "en"
+
+
+def test_parse_line_blank_artist_variants():
+    assert parse_line("제목만") == ("", "제목만")
+    assert parse_line(" - 제목") == ("", "제목")
+    assert parse_line("- 제목") == ("", "제목")
+    assert parse_line("제목 -") == ("", "제목")
+    assert parse_line("A-ha - Take On Me") == ("A-ha", "Take On Me")  # 단어 속 하이픈은 그대로
