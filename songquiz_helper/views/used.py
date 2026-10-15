@@ -1,4 +1,6 @@
 """[활용한 노래 관리] 업로드 / 직접 추가 / 목록·삭제."""
+from collections import Counter
+
 import streamlit as st
 
 import db
@@ -44,14 +46,29 @@ def _upload_section(engine):
         return
 
     st.write(f"읽은 곡: **{len(rows)}곡**")
-    lang_choice = st.selectbox("언어", common.language_options(), key="used_up_lang",
+    marked = [r for r in rows if r.get("language")]
+    if marked:
+        cnt = Counter(r["language"] for r in marked)
+        st.info("📑 문단 표시를 인식했어요: " + " · ".join(f"{lang_label(k)} {v}곡" for k, v in cnt.items())
+                + f" · 표시 없음 {len(rows) - len(marked)}곡")
+    elif name.lower().endswith(".txt"):
+        st.caption("💡 TXT 안에 [한국어] / [영어] / [일본어] 같은 줄을 넣으면 그 아래 곡들의 언어가 자동 지정돼요.")
+    lang_choice = st.selectbox("문단 표시가 없는 곡의 언어" if marked else "언어", common.language_options(),
+                               key="used_up_lang",
                                format_func=lambda c: c if c == common.AUTO else lang_label(c),
                                help="자동 감지는 한글→한국어, 가나→일본어, 영문→영어로 추정해요.")
+    fix_lang = False
+    if marked:
+        fix_lang = st.checkbox("이미 있는 곡도 문단 표시의 언어로 고치기", value=True,
+                               help="예전에 올려서 언어가 잘못 저장된 곡을, 같은 곡이 표시된 문단의 언어로 바꿔요. "
+                                    "가수/제목은 그대로 두고 언어만 바뀝니다.")
     if st.button(f"활용한 노래로 저장 ({len(rows)}곡)", type="primary", disabled=not rows):
         for r in rows:
-            r["language"] = detect_language(r["artist"], r["title"]) if lang_choice == common.AUTO else lang_choice
+            r["explicit"] = bool(r.get("language"))  # 문단 표시로 확정된 언어인지
+            if not r.get("language"):  # 문단 표시가 있으면 그것이 우선
+                r["language"] = detect_language(r["artist"], r["title"]) if lang_choice == common.AUTO else lang_choice
         with st.spinner("저장 중…"):
-            res = db.add_songs_bulk(engine, rows, "used")
+            res = db.add_songs_bulk(engine, rows, "used", update_language=fix_lang)
         st.session_state["upload_result"] = res
         common.bump("used")
         common.bump("used_upload")
@@ -66,7 +83,8 @@ def render():
     res = st.session_state.pop("upload_result", None)
     if res:
         st.success(f"✅ {res['added']}곡 추가 · 중복 {len(res['duplicates'])}곡 건너뜀"
-                   + (f" · 제목 없는 줄 {res['invalid']}개 무시" if res["invalid"] else ""))
+                   + (f" · 제목 없는 줄 {res['invalid']}개 무시" if res["invalid"] else "")
+                   + (f" · 기존 곡 {res['language_updated']}곡의 언어 수정" if res.get("language_updated") else ""))
         if res["duplicates"]:
             with st.expander("중복으로 건너뛴 곡 보기"):
                 st.write("\n".join(f"- {d['artist']} - {d['title']}" if d["artist"] else f"- {d['title']}"

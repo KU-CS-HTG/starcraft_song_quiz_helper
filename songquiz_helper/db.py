@@ -169,14 +169,20 @@ def add_song(engine: Engine, artist: str, title: str, language: str, status: str
         return {"added": False, "existing": None, "pack_no": None}
 
 
-def add_songs_bulk(engine: Engine, rows: list[dict], status: str) -> dict:
-    """여러 곡 추가 (업로드용). rows: [{artist, title, language}].
+def add_songs_bulk(engine: Engine, rows: list[dict], status: str,
+                   update_language: bool = False) -> dict:
+    """여러 곡 추가 (업로드용). rows: [{artist, title, language, explicit(선택)}].
 
-    반환: {"added": int, "duplicates": [row...], "invalid": int}
+    반환: {"added": int, "duplicates": [row...], "invalid": int, "language_updated": int}
     - 이미 DB 에 있거나(순서 뒤바뀜 포함) 파일 안에서 반복된 곡은 건너뛴다.
+    - update_language=True 이면, 이미 있는 곡 중 row["explicit"](문단 표시 등 확실한 언어)이 있고
+      저장된 언어와 다른 곡은 언어만 갱신한다.
     """
     with engine.connect() as conn:
-        existing = {k for (k,) in conn.execute(select(songs.c.norm_key))}
+        existing_rows = conn.execute(select(songs.c.id, songs.c.norm_key, songs.c.language)).all()
+    existing = {k for (_, k, _) in existing_rows}
+    by_key = {k: (i, lang) for (i, k, lang) in existing_rows}
+    lang_fixes: dict[int, str] = {}
     seen, new_rows, dups, invalid = set(existing), [], [], 0
     for r in rows:
         artist, title = (r.get("artist") or "").strip(), (r.get("title") or "").strip()
@@ -186,6 +192,9 @@ def add_songs_bulk(engine: Engine, rows: list[dict], status: str) -> dict:
         key, swapped = keys_for(artist, title)
         if key in seen or swapped in seen:
             dups.append({"artist": artist, "title": title})
+            hit = by_key.get(key) or by_key.get(swapped)
+            if update_language and r.get("explicit") and hit and hit[1] != r.get("language"):
+                lang_fixes[hit[0]] = r["language"]
             continue
         seen.add(key)
         new_rows.append({"artist": artist, "title": title, "key": key,
@@ -211,7 +220,10 @@ def add_songs_bulk(engine: Engine, rows: list[dict], status: str) -> dict:
                     added += 1
                 else:
                     dups.append({"artist": n["artist"], "title": n["title"]})
-    return {"added": added, "duplicates": dups, "invalid": invalid}
+    for sid, lang in lang_fixes.items():
+        with engine.begin() as conn:
+            conn.execute(update(songs).where(songs.c.id == sid).values(language=lang))
+    return {"added": added, "duplicates": dups, "invalid": invalid, "language_updated": len(lang_fixes)}
 
 
 def update_song(engine: Engine, song_id: int, artist: str, title: str, language: str,

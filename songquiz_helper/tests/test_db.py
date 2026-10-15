@@ -81,3 +81,16 @@ def test_update_song_recomputes_key_and_blocks_clash(eng):
     assert db.update_song(eng, sid, "BTS", "Dynamite", "en")["updated"]
     with pytest.raises(ValueError):
         db.update_song(eng, sid, "BTS", "  ", "en")
+
+
+def test_bulk_language_update_for_existing(eng):
+    db.add_songs_bulk(eng, [{"artist": "IU", "title": "Good Day", "language": "en"},
+                            {"artist": "A", "title": "x", "language": "en"}], "used")
+    rows = [{"artist": "IU", "title": "Good Day", "language": "ko", "explicit": True},
+            {"artist": "A", "title": "x", "language": "ja", "explicit": False}]  # 확정 아님 → 건드리지 않음
+    r0 = db.add_songs_bulk(eng, rows, "used")
+    assert r0["language_updated"] == 0                              # 옵션을 켜지 않으면 변경 없음
+    r1 = db.add_songs_bulk(eng, rows, "used", update_language=True)
+    assert r1["added"] == 0 and r1["language_updated"] == 1
+    langs = {s["artist"]: s["language"] for s in db.list_songs(eng)}
+    assert langs == {"IU": "ko", "A": "en"}
