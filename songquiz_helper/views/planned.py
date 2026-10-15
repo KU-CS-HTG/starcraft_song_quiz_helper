@@ -33,6 +33,8 @@ def render():
                         where = "활용한 노래" if ex and ex["status"] == "used" else "활용할 노래들"
                         st.warning(f"이미 {where}에 있는 곡이에요" + (f": {ex['artist']} - {ex['title']}" if ex else "."))
 
+    common.show_cleanup_skipped()
+    common.render_cleanup(engine, "planned")
     flang = st.selectbox("언어 필터", ["전체"] + list(LANGUAGES), key="planned_lang_filter",
                          format_func=lambda c: c if c == "전체" else lang_label(c))
     rows = db.list_songs(engine, status="planned", language=None if flang == "전체" else flang)

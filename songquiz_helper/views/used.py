@@ -112,6 +112,8 @@ def render():
                         st.warning("이미 있는 곡이에요" + (f": {ex['artist']} - {ex['title']}" if ex else "."))
 
     st.divider()
+    common.show_cleanup_skipped()
+    common.render_cleanup(engine, "used")
     st.subheader("활용한 노래 목록")
     f1 = st.selectbox("언어 필터", ["전체"] + list(LANGUAGES), key="used_lang_filter",
                       format_func=lambda c: c if c == "전체" else lang_label(c))

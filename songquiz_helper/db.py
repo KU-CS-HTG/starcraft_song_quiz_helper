@@ -10,7 +10,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 import streamlit as st
-from sqlalchemy import (BigInteger, Column, DateTime, Index, Integer, MetaData,
+from sqlalchemy import (BigInteger, Column, DateTime, Index, Integer, MetaData, bindparam,
                         String, Table, Text, create_engine, delete, func,
                         insert, select, update)
 from sqlalchemy.engine import Engine
@@ -250,6 +250,42 @@ def update_song(engine: Engine, song_id: int, artist: str, title: str, language:
             return {"updated": n > 0, "existing": None}
     except IntegrityError:
         return {"updated": False, "existing": None}
+
+
+def apply_name_fixes(engine: Engine, fixes: list[dict]) -> dict:
+    """가수/제목 일괄 수정 (한 트랜잭션). fixes: [{id, artist, title}].
+
+    다른 곡(이번 일괄 수정으로 바뀐 곡 포함)과 같은 곡이 되어 버리는 항목은 건너뛴다.
+    반환: {"updated": int, "skipped": [{"id", "artist", "title", "existing": dict}]}
+    """
+    skipped, to_apply = [], []
+    with engine.begin() as conn:
+        rows = conn.execute(select(songs.c.id, songs.c.artist, songs.c.title, songs.c.status,
+                                   songs.c.norm_key)).all()
+        info = {r.id: r for r in rows}
+        owner = {r.norm_key: r.id for r in rows}
+        for f in fixes:
+            sid, artist, title = f["id"], (f.get("artist") or "").strip(), (f.get("title") or "").strip()
+            old = info.get(sid)
+            if not old or not title:
+                continue
+            key, swapped = keys_for(artist, title)
+            clash = next((owner[k] for k in (key, swapped) if k in owner and owner[k] != sid), None)
+            if clash is not None:
+                c = info[clash]
+                skipped.append({"id": sid, "artist": artist, "title": title,
+                                "existing": {"artist": c.artist, "title": c.title, "status": c.status}})
+                continue
+            if owner.get(old.norm_key) == sid:
+                del owner[old.norm_key]
+            owner[key] = sid
+            to_apply.append({"b_id": sid, "b_artist": artist, "b_title": title, "b_key": key})
+        if to_apply:
+            conn.execute(
+                update(songs).where(songs.c.id == bindparam("b_id")).values(
+                    artist=bindparam("b_artist"), title=bindparam("b_title"), norm_key=bindparam("b_key")),
+                to_apply)
+    return {"updated": len(to_apply), "skipped": skipped}
 
 
 def delete_songs(engine: Engine, ids: list[int]) -> int:

@@ -10,6 +10,7 @@ import streamlit as st
 
 import db
 import youtube
+from cleanup import plan_name_fixes
 from config import LANGUAGES, get_secret, lang_label
 from normalize import SongIndex, detect_language
 
@@ -270,3 +271,43 @@ def render_edit(engine, rows: list[dict], ids: list[int]) -> None:
             st.warning(f"이미 {where}에 같은 곡이 있어서 수정하지 않았어요: {ex['artist']} - {ex['title']}")
         else:
             st.warning("수정하지 못했어요. 다시 시도해 주세요.")
+
+
+# ---------------------------------------------------------------- 가수/제목 일괄 정리
+def render_cleanup(engine, status: str) -> None:
+    """가수가 비어 있고 제목에 '가수 - 제목' / '가수: 제목' 이 통째로 들어간 곡을 한꺼번에 정리."""
+    plan = plan_name_fixes(db.list_songs(engine, status=status))
+    with st.expander(f"🧹 가수/제목 한꺼번에 정리 (후보 {len(plan)}곡)", expanded=bool(plan)):
+        if not plan:
+            st.caption("정리할 곡이 없어요. 가수가 비어 있으면서 제목에 ' - ' 나 ':' 구분자가 들어간 곡이 대상이에요.")
+            return
+        st.caption("가수가 비어 있는 곡의 제목을 다시 나눈 결과예요. 맞지 않는 줄은 체크를 해제하거나 "
+                   "가수/제목 칸을 직접 고친 뒤 적용하세요. (예: 가수 없이 콜론이 든 제목 'Mission: Impossible')")
+        df = pd.DataFrame({"적용": True, "현재 제목": [p["old_title"] for p in plan],
+                           "가수": [p["artist"] for p in plan], "제목": [p["title"] for p in plan]})
+        key = f"cleanup_{status}_{ver('cleanup')}_{len(plan)}"
+        edited = st.data_editor(df, hide_index=True, width="stretch", key=key, disabled=["현재 제목"],
+                                column_config={"적용": st.column_config.CheckboxColumn("적용", width="small")})
+        chosen = edited[edited["적용"]]
+        if st.button(f"✅ 선택한 {len(chosen)}곡 정리 적용", type="primary", disabled=chosen.empty, key=f"{key}_go"):
+            fixes = [{"id": plan[i]["id"], "artist": row["가수"], "title": row["제목"]}
+                     for i, row in chosen.iterrows()]
+            res = db.apply_name_fixes(engine, fixes)
+            msg = f"{res['updated']}곡을 정리했어요."
+            if res["skipped"]:
+                msg += f" (다른 곡과 겹쳐 건너뛴 곡 {len(res['skipped'])}곡)"
+                st.session_state["_cleanup_skipped"] = res["skipped"]
+            flash(msg)
+            bump("cleanup")
+            bump_all()
+            st.rerun()
+
+
+def show_cleanup_skipped() -> None:
+    sk = st.session_state.pop("_cleanup_skipped", None)
+    if sk:
+        with st.expander(f"겹쳐서 건너뛴 곡 {len(sk)}곡 보기", expanded=True):
+            st.write("\n".join(
+                f"- {s['artist'] + ' - ' if s['artist'] else ''}{s['title']}  ⟵ 이미 있음: "
+                f"{s['existing']['artist'] + ' - ' if s['existing']['artist'] else ''}{s['existing']['title']}"
+                for s in sk))
