@@ -58,3 +58,26 @@ def test_history_and_cache(eng):
     db.cache_put(eng, "q", [{"x": 2}])
     assert db.cache_get(eng, "q") == [{"x": 2}]
     assert db.cache_get(eng, "q", ttl_days=0) is None
+
+
+def test_update_song_recomputes_key_and_blocks_clash(eng):
+    # 구분자 없이 올라가서 가수가 비어 있는 곡
+    db.add_song(eng, "", "BTS-Dynamite", "en", "used")
+    db.add_song(eng, "IU", "Good Day", "ko", "used")
+    sid = next(s["id"] for s in db.list_songs(eng) if s["title"] == "BTS-Dynamite")
+
+    assert db.update_song(eng, sid, "BTS", "Dynamite", "ko", "http://y")["updated"]
+    s = next(s for s in db.list_songs(eng) if s["id"] == sid)
+    assert (s["artist"], s["title"], s["language"], s["youtube_url"]) == ("BTS", "Dynamite", "ko", "http://y")
+    # 수정 뒤에는 새 표기로 중복이 판별된다
+    assert not db.add_song(eng, "bts", "dynamite (Official MV)", "en", "used")["added"]
+
+    # 다른 곡과 같아지는 수정(순서 뒤바뀜 포함)은 거부
+    other = next(s["id"] for s in db.list_songs(eng) if s["artist"] == "IU")
+    r = db.update_song(eng, other, "Dynamite", "BTS", "en")
+    assert not r["updated"] and r["existing"]["id"] == sid
+
+    # 자기 자신과 같은 표기로 저장(언어만 변경)은 허용, 빈 제목은 오류
+    assert db.update_song(eng, sid, "BTS", "Dynamite", "en")["updated"]
+    with pytest.raises(ValueError):
+        db.update_song(eng, sid, "BTS", "  ", "en")

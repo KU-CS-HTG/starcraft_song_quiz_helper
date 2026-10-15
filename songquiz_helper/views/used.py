@@ -62,6 +62,7 @@ def render():
     st.header("📚 활용한 노래 관리")
     engine = common.need_engine()
 
+    common.show_flash()
     res = st.session_state.pop("upload_result", None)
     if res:
         st.success(f"✅ {res['added']}곡 추가 · 중복 {len(res['duplicates'])}곡 건너뜀"
@@ -100,8 +101,13 @@ def render():
     kw = st.text_input("목록 안에서 검색", key="used_kw").strip().lower()
     if kw:
         rows = [r for r in rows if kw in f"{r['artist']} {r['title']}".lower()]
-    st.caption(f"{len(rows)}곡")
-    ids = common.select_table(rows, f"used_tbl_{common.ver('used')}_{f1}_{kw}")
+    no_artist = st.checkbox("가수가 비어 있는 곡만 보기", key="used_no_artist",
+                            help="TXT 에서 ' - ' 구분이 없어 가수가 분리되지 않은 곡을 찾을 때 사용하세요.")
+    if no_artist:
+        rows = [r for r in rows if not (r["artist"] or "").strip()]
+    st.caption(f"{len(rows)}곡 · 표에서 곡을 선택하면 아래에서 수정/삭제할 수 있어요")
+    ids = common.select_table(rows, f"used_tbl_{common.ver('used')}_{f1}_{kw}_{no_artist}")
+    common.render_edit(engine, rows, ids)
 
     if ids:
         st.write(f"선택한 곡 {len(ids)}곡")

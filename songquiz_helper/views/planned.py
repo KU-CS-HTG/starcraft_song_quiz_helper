@@ -9,6 +9,7 @@ from views import common
 def render():
     st.header("📋 활용할 노래들")
     engine = common.need_engine()
+    common.show_flash()
 
     with st.expander("곡 직접 추가"):
         with st.form("planned_add", clear_on_submit=True):
@@ -35,8 +36,12 @@ def render():
     flang = st.selectbox("언어 필터", ["전체"] + list(LANGUAGES), key="planned_lang_filter",
                          format_func=lambda c: c if c == "전체" else lang_label(c))
     rows = db.list_songs(engine, status="planned", language=None if flang == "전체" else flang)
-    st.caption(f"{len(rows)}곡")
-    ids = common.select_table(rows, f"planned_tbl_{common.ver('planned')}_{flang}", with_pack=True)
+    no_artist = st.checkbox("가수가 비어 있는 곡만 보기", key="planned_no_artist")
+    if no_artist:
+        rows = [r for r in rows if not (r["artist"] or "").strip()]
+    st.caption(f"{len(rows)}곡 · 표에서 곡을 선택하면 아래에서 수정/삭제할 수 있어요")
+    ids = common.select_table(rows, f"planned_tbl_{common.ver('planned')}_{flang}_{no_artist}", with_pack=True)
+    common.render_edit(engine, rows, ids)
 
     if ids:
         st.write(f"선택한 곡 {len(ids)}곡")

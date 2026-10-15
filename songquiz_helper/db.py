@@ -214,6 +214,32 @@ def add_songs_bulk(engine: Engine, rows: list[dict], status: str) -> dict:
     return {"added": added, "duplicates": dups, "invalid": invalid}
 
 
+def update_song(engine: Engine, song_id: int, artist: str, title: str, language: str,
+                youtube_url: str | None = None) -> dict:
+    """곡 정보 수정. 가수/제목이 바뀌면 중복 판별 키(norm_key)도 다시 계산한다.
+
+    다른 곡과 같은 곡(순서 뒤바뀜 포함)이 되어 버리면 수정하지 않는다.
+    반환: {"updated": bool, "existing": dict | None}  (existing: 충돌한 다른 곡)
+    """
+    artist, title = (artist or "").strip(), (title or "").strip()
+    if not title:
+        raise ValueError("제목은 비워 둘 수 없어요.")
+    key, swapped = keys_for(artist, title)
+    try:
+        with engine.begin() as conn:
+            clash = conn.execute(
+                select(songs).where(songs.c.norm_key.in_({key, swapped}), songs.c.id != song_id).limit(1)
+            ).first()
+            if clash:
+                return {"updated": False, "existing": dict(clash._mapping)}
+            n = conn.execute(update(songs).where(songs.c.id == song_id).values(
+                artist=artist, title=title, language=language or "기타",
+                youtube_url=(youtube_url or "").strip() or None, norm_key=key)).rowcount
+            return {"updated": n > 0, "existing": None}
+    except IntegrityError:
+        return {"updated": False, "existing": None}
+
+
 def delete_songs(engine: Engine, ids: list[int]) -> int:
     if not ids:
         return 0

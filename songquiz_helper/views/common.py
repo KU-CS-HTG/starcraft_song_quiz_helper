@@ -107,6 +107,23 @@ def select_table(rows: list[dict], key: str, with_pack: bool = False) -> list[in
     return [rows[i]["id"] for i in event.selection.rows if i < len(rows)]
 
 
+def bump_all() -> None:
+    """모든 목록 표의 선택 상태를 초기화한다 (곡이 수정/이동/삭제된 뒤)."""
+    for n in ("used", "planned", "packs"):
+        bump(n)
+
+
+def flash(msg: str) -> None:
+    """다음 화면(rerun 이후)에 한 번만 보여줄 성공 메시지."""
+    st.session_state["_flash"] = msg
+
+
+def show_flash() -> None:
+    msg = st.session_state.pop("_flash", None)
+    if msg:
+        st.success(msg)
+
+
 def bump(name: str) -> None:
     """표 위젯 key 의 버전을 올려 선택 상태를 초기화한다 (데이터 변경 후 호출)."""
     st.session_state[f"ver_{name}"] = st.session_state.get(f"ver_{name}", 0) + 1
@@ -208,3 +225,48 @@ def render_youtube(engine, artist: str, title: str, key_prefix: str) -> None:
         st.caption("\n\n".join("• " + t for t in youtube.RULES_TEXT)
                    + f"\n\n합계가 {youtube.OFFICIAL_MIN_SCORE}점 이상인 영상 중 최고점(동점이면 조회수 높은 쪽)을 고릅니다. "
                      "최종 판단은 직접 해 주세요.")
+
+
+# ---------------------------------------------------------------- 곡 수정
+def render_edit(engine, rows: list[dict], ids: list[int]) -> None:
+    """표에서 곡을 정확히 1개 선택했을 때 수정 폼을 보여준다."""
+    if not ids:
+        return
+    if len(ids) > 1:
+        st.caption("✏️ 수정은 곡을 하나만 선택했을 때 할 수 있어요.")
+        return
+    song = next((r for r in rows if r["id"] == ids[0]), None)
+    if not song:
+        return
+    codes = list(LANGUAGES)
+    with st.container(border=True):
+        st.markdown("**✏️ 선택한 곡 수정**")
+        with st.form(f"edit_form_{song['id']}"):
+            artist = st.text_input("가수", value=song["artist"])
+            title = st.text_input("제목", value=song["title"])
+            lang = st.selectbox("언어", language_options(), key=f"edit_lang_{song['id']}",
+                                index=codes.index(song["language"]) + 1 if song["language"] in codes else 0,
+                                format_func=lambda c: "자동 감지(다시 판별)" if c == AUTO else lang_label(c))
+            url = st.text_input("유튜브 링크 (선택)", value=song.get("youtube_url") or "")
+            c1, c2 = st.columns(2)
+            save = c1.form_submit_button("💾 저장", type="primary")
+            swap = c2.form_submit_button("🔁 가수↔제목 바꿔서 저장")
+        if not (save or swap):
+            return
+        if swap:
+            artist, title = title, artist
+        if not title.strip():
+            st.warning("제목은 비워 둘 수 없어요.")
+            return
+        code = detect_language(artist, title) if lang == AUTO else lang
+        res = db.update_song(engine, song["id"], artist, title, code, url)
+        if res["updated"]:
+            flash(f"수정했어요: {artist.strip() + ' - ' if artist.strip() else ''}{title.strip()}")
+            bump_all()
+            st.rerun()
+        elif res["existing"]:
+            ex = res["existing"]
+            where = "활용한 노래" if ex["status"] == "used" else "활용할 노래들"
+            st.warning(f"이미 {where}에 같은 곡이 있어서 수정하지 않았어요: {ex['artist']} - {ex['title']}")
+        else:
+            st.warning("수정하지 못했어요. 다시 시도해 주세요.")
