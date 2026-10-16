@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 import streamlit as st
 from sqlalchemy import (BigInteger, Column, DateTime, Index, Integer, MetaData, bindparam,
                         String, Table, Text, create_engine, delete, func,
-                        insert, select, update)
+                        inspect, insert, select, text, update)
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import StaticPool
@@ -46,6 +46,7 @@ recommended_history = Table(
     Column("language", String(8), nullable=False, server_default="기타"),
     Column("recommended_at", DateTime(timezone=True), nullable=False),
     Column("norm_key", Text, nullable=False),
+    Column("reason", Text),  # 추천 이유 (나중에 추가된 컬럼 — init_schema 가 기존 DB 에도 붙여 준다)
     Index("ix_history_norm_key", "norm_key"),
 )
 
@@ -94,8 +95,12 @@ def make_engine(url: str) -> Engine:
 
 
 def init_schema(engine: Engine) -> None:
-    """테이블이 없으면 만든다 (CREATE TABLE IF NOT EXISTS)."""
+    """테이블이 없으면 만들고, 예전에 만든 DB 에 새로 생긴 컬럼이 없으면 붙인다."""
     metadata.create_all(engine, checkfirst=True)
+    cols = {c["name"] for c in inspect(engine).get_columns("recommended_history")}
+    if "reason" not in cols:  # 마이그레이션: 추천 이유 컬럼 추가
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE recommended_history ADD COLUMN reason TEXT"))
 
 
 @st.cache_resource(show_spinner="DB에 연결하는 중…")
@@ -364,7 +369,8 @@ def add_history(engine: Engine, items: list[dict]) -> int:
             continue
         seen.add(key)
         payload.append(dict(title=it["title"], artist=it.get("artist", ""),
-                            language=it.get("language") or "기타", recommended_at=now, norm_key=key))
+                            language=it.get("language") or "기타", recommended_at=now, norm_key=key,
+                            reason=(it.get("reason") or "").strip() or None))
     if payload:
         with engine.begin() as conn:
             conn.execute(insert(recommended_history), payload)

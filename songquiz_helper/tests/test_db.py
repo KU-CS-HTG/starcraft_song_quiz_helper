@@ -94,3 +94,23 @@ def test_bulk_language_update_for_existing(eng):
     assert r1["added"] == 0 and r1["language_updated"] == 1
     langs = {s["artist"]: s["language"] for s in db.list_songs(eng)}
     assert langs == {"IU": "ko", "A": "en"}
+
+
+def test_history_saves_reason_and_migrates_old_schema(tmp_path):
+    from sqlalchemy import create_engine, text
+    # 1) reason 컬럼이 없던 예전 버전 DB 를 만든다
+    url = f"sqlite:///{tmp_path / 'old.db'}"
+    old = create_engine(url)
+    with old.begin() as c:
+        c.execute(text("CREATE TABLE recommended_history (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL,"
+                       " artist TEXT NOT NULL DEFAULT '', language VARCHAR(8) NOT NULL DEFAULT '기타',"
+                       " recommended_at DATETIME NOT NULL, norm_key TEXT NOT NULL)"))
+        c.execute(text("INSERT INTO recommended_history (title, artist, language, recommended_at, norm_key)"
+                       " VALUES ('옛곡', '옛가수', 'ko', '2026-01-01 00:00:00', '옛가수옛곡')"))
+    old.dispose()
+    # 2) 새 코드로 열면 컬럼이 자동 추가되고 기존 기록은 그대로 남는다
+    eng = db.make_engine(url)
+    assert db.add_history(eng, [{"artist": "A", "title": "T", "language": "en", "reason": " 취향 저격 "}]) == 1
+    by = {h["title"]: h for h in db.list_history(eng)}
+    assert by["옛곡"]["reason"] is None and by["T"]["reason"] == "취향 저격"
+    db.make_engine(url)  # 이미 컬럼이 있어도 다시 열 수 있다 (멱등)

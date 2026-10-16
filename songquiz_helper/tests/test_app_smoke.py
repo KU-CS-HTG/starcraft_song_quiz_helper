@@ -120,3 +120,20 @@ def test_recommend_flow_with_fakes(at, monkeypatch):
     at.run()
     keys = {(h["artist"], h["title"]) for h in db.list_history(e)}
     assert len(keys) == len(db.list_history(e)) == 20
+
+
+def test_history_tab_shows_records_after_restart(at, monkeypatch):
+    """추천 기록은 DB 에 남아 있어서, 세션이 새로 시작돼도 기록 탭에 보인다."""
+    import db
+    _login(at)
+    e = db.get_engine()
+    db.add_history(e, [{"artist": "IU", "title": "Good Day", "language": "ko", "reason": "r1"},
+                       {"artist": "BTS", "title": "Dynamite", "language": "ko", "reason": "r2"}])
+    db.add_song(e, "BTS", "Dynamite", "ko", "planned")  # 하나는 이미 저장한 곡
+    at.sidebar.radio[0].set_value("🎧 노래 추천").run()  # 새 세션과 같은 상태 (rec_items 없음)
+    assert not at.exception, at.exception
+    assert "rec_items" not in at.session_state
+    df = at.dataframe[0].value
+    assert set(df["제목"]) == {"Good Day", "Dynamite"}
+    assert dict(zip(df["제목"], df["상태"])) == {"Good Day": "— 미저장", "Dynamite": "📋 활용 예정"}
+    assert dict(zip(df["제목"], df["이유"])) == {"Good Day": "r1", "Dynamite": "r2"}
