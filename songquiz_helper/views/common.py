@@ -80,32 +80,93 @@ def to_local(dt) -> str:
     return ts.tz_convert("Asia/Seoul").strftime("%Y-%m-%d %H:%M")
 
 
-def songs_df(rows: list[dict], with_pack: bool = False) -> pd.DataFrame:
-    cols = {"artist": "가수", "title": "제목", "language": "언어"}
-    if with_pack:
-        cols["pack_no"] = "팩"
-    cols.update({"youtube_url": "유튜브", "added_at": "추가일"})
-    df = pd.DataFrame(rows, columns=["id", *cols])
-    df["language"] = df["language"].map(lang_label)
-    df["added_at"] = df["added_at"].map(to_local)
-    return df.rename(columns=cols)
+# ---------------------------------------------------------------- 곡 목록 (표에서 바로 수정)
+def _cell(v) -> str:
+    return "" if v is None or (not isinstance(v, str) and pd.isna(v)) else str(v).strip()
 
 
-def select_table(rows: list[dict], key: str, with_pack: bool = False) -> list[int]:
-    """곡 목록 표를 보여주고, 사용자가 선택한 곡의 id 목록을 돌려준다.
+def collect_edits(rows: list[dict], edited: pd.DataFrame, to_code: dict) -> tuple[list[dict], list[int]]:
+    """편집된 표(edited)를 원래 목록(rows)과 비교해 (바뀐 곡 목록, '선택' 체크된 곡 id 목록) 을 만든다."""
+    changes, selected = [], []
+    for i, r in enumerate(rows):
+        e = edited.iloc[i]
+        new = {"artist": _cell(e["가수"]), "title": _cell(e["제목"]),
+               "language": to_code.get(_cell(e["언어"]), r["language"]), "youtube_url": _cell(e["유튜브 링크"])}
+        old = {"artist": _cell(r["artist"]), "title": _cell(r["title"]),
+               "language": r["language"], "youtube_url": _cell(r["youtube_url"])}
+        if new != old:
+            changes.append({"id": r["id"], **new})
+        if bool(e["선택"]):
+            selected.append(r["id"])
+    return changes, selected
 
-    표 내용(필터 등)이 바뀌면 선택 상태가 엉키지 않도록 호출하는 쪽에서 key 에 버전/필터를 포함시킨다.
+
+def song_editor(engine, rows: list[dict], key: str, with_pack: bool = False) -> list[int]:
+    """곡 목록을 엑셀처럼 편집할 수 있는 표로 보여준다.
+
+    - 가수/제목/언어/유튜브 링크 칸을 더블클릭하면 바로 수정, 여러 칸을 고친 뒤 [변경사항 저장] 한 번으로 반영.
+    - '선택' 체크 열로 고른 곡의 id 목록을 돌려준다 (삭제/활용 완료/팩 이동 등 호출한 쪽의 작업용).
+    - 표 내용(필터 등)이 바뀌면 입력 상태가 엉키지 않도록 호출하는 쪽에서 key 에 버전/필터를 포함시킨다.
     """
     if not rows:
         st.caption("곡이 없어요.")
         return []
-    df = songs_df(rows, with_pack)
-    event = st.dataframe(
-        df.drop(columns=["유튜브"]) if df["유튜브"].isna().all() else df,
-        hide_index=True, on_select="rerun", selection_mode="multi-row", key=key,
-        width="stretch", column_config={"id": None, "유튜브": st.column_config.LinkColumn("유튜브", display_text="열기")},
+    labels = {c: lang_label(c) for c in LANGUAGES}
+    to_code = {v: k for k, v in labels.items()}
+    for r in rows:  # 목록에 없는 언어 코드도 그대로 보여줄 수 있게
+        to_code.setdefault(lang_label(r["language"]), r["language"])
+    data = {"선택": False,
+            "가수": [r["artist"] or "" for r in rows], "제목": [r["title"] or "" for r in rows],
+            "언어": [lang_label(r["language"]) for r in rows],
+            "유튜브 링크": [r["youtube_url"] or "" for r in rows]}
+    if with_pack:
+        data["팩"] = [r["pack_no"] for r in rows]
+    data["추가일"] = [to_local(r["added_at"]) for r in rows]
+    df = pd.DataFrame(data)
+
+    st.caption("✏️ 가수·제목·언어·링크 칸을 **더블클릭**해서 바로 고치고, 여러 곡을 고친 뒤 **변경사항 저장**을 누르세요. "
+               "삭제 등 다른 작업은 '선택' 칸을 체크하세요. (검색/필터를 바꾸면 저장하지 않은 수정은 사라져요)")
+    edited = st.data_editor(
+        df, hide_index=True, width="stretch", num_rows="fixed", key=key,
+        height=min(38 + 35 * len(df), 560), disabled=[c for c in ("팩", "추가일") if c in df],
+        column_config={
+            "선택": st.column_config.CheckboxColumn("선택", width="small"),
+            "제목": st.column_config.TextColumn("제목", required=True),
+            "언어": st.column_config.SelectboxColumn("언어", options=list(to_code), required=True, width="small"),
+            "유튜브 링크": st.column_config.TextColumn("유튜브 링크"),
+            "팩": st.column_config.NumberColumn("팩", width="small"),
+        },
     )
-    return [rows[i]["id"] for i in event.selection.rows if i < len(rows)]
+
+    changes, selected = collect_edits(rows, edited, to_code)
+
+    if changes:
+        st.warning(f"✏️ 저장하지 않은 변경이 {len(changes)}곡 있어요.")
+        if any(not c["title"] for c in changes):
+            st.error("제목이 비어 있는 곡이 있어요. 제목을 채우거나 되돌려 주세요.")
+        elif st.button(f"💾 변경사항 저장 ({len(changes)}곡)", type="primary", key=f"{key}_save"):
+            res = db.update_songs_bulk(engine, changes)
+            msg = f"{res['updated']}곡을 수정했어요."
+            if res["skipped"]:
+                msg += f" (다른 곡과 겹쳐 수정하지 못한 곡 {len(res['skipped'])}곡)"
+                st.session_state["_cleanup_skipped"] = res["skipped"]
+            flash(msg)
+            bump_all()
+            st.rerun()
+    elif selected:
+        swappable = [r for r in rows if r["id"] in selected and _cell(r["artist"]) and _cell(r["title"])]
+        if st.button(f"🔁 선택한 {len(selected)}곡 가수↔제목 바꾸기", key=f"{key}_swap", disabled=not swappable,
+                     help="가수와 제목이 서로 뒤바뀌어 올라간 곡을 한 번에 고쳐요. 가수가 비어 있는 곡은 제외돼요."):
+            res = db.update_songs_bulk(
+                engine, [{"id": r["id"], "artist": r["title"], "title": r["artist"]} for r in swappable])
+            msg = f"{res['updated']}곡의 가수와 제목을 바꿨어요."
+            if res["skipped"]:
+                msg += f" (다른 곡과 겹쳐 건너뛴 곡 {len(res['skipped'])}곡)"
+                st.session_state["_cleanup_skipped"] = res["skipped"]
+            flash(msg)
+            bump_all()
+            st.rerun()
+    return selected
 
 
 def bump_all() -> None:
@@ -226,51 +287,6 @@ def render_youtube(engine, artist: str, title: str, key_prefix: str) -> None:
         st.caption("\n\n".join("• " + t for t in youtube.RULES_TEXT)
                    + f"\n\n합계가 {youtube.OFFICIAL_MIN_SCORE}점 이상인 영상 중 최고점(동점이면 조회수 높은 쪽)을 고릅니다. "
                      "최종 판단은 직접 해 주세요.")
-
-
-# ---------------------------------------------------------------- 곡 수정
-def render_edit(engine, rows: list[dict], ids: list[int]) -> None:
-    """표에서 곡을 정확히 1개 선택했을 때 수정 폼을 보여준다."""
-    if not ids:
-        return
-    if len(ids) > 1:
-        st.caption("✏️ 수정은 곡을 하나만 선택했을 때 할 수 있어요.")
-        return
-    song = next((r for r in rows if r["id"] == ids[0]), None)
-    if not song:
-        return
-    codes = list(LANGUAGES)
-    with st.container(border=True):
-        st.markdown("**✏️ 선택한 곡 수정**")
-        with st.form(f"edit_form_{song['id']}"):
-            artist = st.text_input("가수", value=song["artist"])
-            title = st.text_input("제목", value=song["title"])
-            lang = st.selectbox("언어", language_options(), key=f"edit_lang_{song['id']}",
-                                index=codes.index(song["language"]) + 1 if song["language"] in codes else 0,
-                                format_func=lambda c: "자동 감지(다시 판별)" if c == AUTO else lang_label(c))
-            url = st.text_input("유튜브 링크 (선택)", value=song.get("youtube_url") or "")
-            c1, c2 = st.columns(2)
-            save = c1.form_submit_button("💾 저장", type="primary")
-            swap = c2.form_submit_button("🔁 가수↔제목 바꿔서 저장")
-        if not (save or swap):
-            return
-        if swap:
-            artist, title = title, artist
-        if not title.strip():
-            st.warning("제목은 비워 둘 수 없어요.")
-            return
-        code = detect_language(artist, title) if lang == AUTO else lang
-        res = db.update_song(engine, song["id"], artist, title, code, url)
-        if res["updated"]:
-            flash(f"수정했어요: {artist.strip() + ' - ' if artist.strip() else ''}{title.strip()}")
-            bump_all()
-            st.rerun()
-        elif res["existing"]:
-            ex = res["existing"]
-            where = "활용한 노래" if ex["status"] == "used" else "활용할 노래들"
-            st.warning(f"이미 {where}에 같은 곡이 있어서 수정하지 않았어요: {ex['artist']} - {ex['title']}")
-        else:
-            st.warning("수정하지 못했어요. 다시 시도해 주세요.")
 
 
 # ---------------------------------------------------------------- 가수/제목 일괄 정리

@@ -137,3 +137,60 @@ def test_history_tab_shows_records_after_restart(at, monkeypatch):
     assert set(df["제목"]) == {"Good Day", "Dynamite"}
     assert dict(zip(df["제목"], df["상태"])) == {"Good Day": "— 미저장", "Dynamite": "📋 활용 예정"}
     assert dict(zip(df["제목"], df["이유"])) == {"Good Day": "r1", "Dynamite": "r2"}
+
+
+def test_table_edit_multiple_songs_and_save(at):
+    """표에서 여러 곡을 고친 상태(data_editor 의 edited_rows)로 [변경사항 저장] → DB 반영까지."""
+    import db
+    _login(at)
+    e = db.get_engine()
+    db.add_song(e, "", "BTS - Dynamite 오타", "기타", "used")       # id 1  (표에서 맨 아래)
+    db.add_song(e, "IU", "Good Day", "en", "used")                    # id 2
+    db.add_song(e, "Coldplay", "Yellow", "en", "used")                # id 3  (표에서 맨 위)
+    at.sidebar.radio[0].set_value("📚 활용한 노래 관리").run()
+    key = "used_tbl_0_전체__False"                                   # 표 위젯 key (버전_언어필터_검색어_가수없음필터)
+    # 표 행 순서(최신순): 0=Coldplay, 1=IU, 2=BTS.  사용자가 3곡의 여러 칸을 더블클릭해서 고친 상태
+    edits = {"edited_rows": {
+        0: {"제목": "Yellow (수정)"},
+        1: {"가수": "아이유", "제목": "좋은 날", "언어": "한국어"},
+        2: {"가수": "BTS", "제목": "Dynamite", "유튜브 링크": "http://y/1"}}, "added_rows": [], "deleted_rows": []}
+    at.session_state[key] = edits
+    at.run()
+    assert not at.exception, at.exception
+    assert any("저장하지 않은 변경이 3곡" in w.value for w in at.warning)
+    at.session_state[key] = edits      # 저장 버튼을 누르는 실행에도 표 값이 함께 전달된다
+    next(b for b in at.button if "변경사항 저장 (3곡)" in b.label).click()
+    at.run()
+    assert not at.exception, at.exception
+    assert any("3곡을 수정했어요" in s.value for s in at.success)
+    got = {s["id"]: (s["artist"], s["title"], s["language"], s["youtube_url"]) for s in db.list_songs(e)}
+    assert got == {1: ("BTS", "Dynamite", "기타", "http://y/1"), 2: ("아이유", "좋은 날", "ko", None),
+                   3: ("Coldplay", "Yellow (수정)", "en", None)}
+    # 저장 뒤에는 수정 표시가 사라지고, 새 표기로 중복 판별이 된다
+    assert not any("저장하지 않은 변경" in w.value for w in at.warning)
+    assert not db.add_song(e, "bts", "dynamite (Official MV)", "en", "used")["added"]
+
+
+def test_table_edit_blocks_empty_title_and_reports_clash(at):
+    import db
+    _login(at)
+    e = db.get_engine()
+    db.add_song(e, "A", "one", "en", "used")      # id 1 (표 1번 행)
+    db.add_song(e, "B", "two", "en", "used")      # id 2 (표 0번 행)
+    at.sidebar.radio[0].set_value("📚 활용한 노래 관리").run()
+    key = "used_tbl_0_전체__False"
+    # 제목을 비움 → 저장 버튼 대신 오류
+    at.session_state[key] = {"edited_rows": {0: {"제목": ""}}, "added_rows": [], "deleted_rows": []}
+    at.run()
+    assert any("제목이 비어 있는 곡" in x.value for x in at.error)
+    assert not any("변경사항 저장" in b.label for b in at.button)
+    # 다른 곡과 같은 곡으로 고침 → 건너뛰고 안내, 아무것도 삭제되지 않음
+    clash = {"edited_rows": {0: {"가수": "A", "제목": "one"}}, "added_rows": [], "deleted_rows": []}
+    at.session_state[key] = clash
+    at.run()
+    at.session_state[key] = clash
+    next(b for b in at.button if "변경사항 저장 (1곡)" in b.label).click()
+    at.run()
+    assert not at.exception, at.exception
+    assert any("겹쳐" in s.value for s in at.success)
+    assert {(s["artist"], s["title"]) for s in db.list_songs(e)} == {("A", "one"), ("B", "two")}

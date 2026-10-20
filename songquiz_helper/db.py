@@ -257,40 +257,56 @@ def update_song(engine: Engine, song_id: int, artist: str, title: str, language:
         return {"updated": False, "existing": None}
 
 
-def apply_name_fixes(engine: Engine, fixes: list[dict]) -> dict:
-    """가수/제목 일괄 수정 (한 트랜잭션). fixes: [{id, artist, title}].
+def update_songs_bulk(engine: Engine, edits: list[dict]) -> dict:
+    """여러 곡을 한 트랜잭션으로 수정. edits: [{id, artist?, title?, language?, youtube_url?}].
 
-    다른 곡(이번 일괄 수정으로 바뀐 곡 포함)과 같은 곡이 되어 버리는 항목은 건너뛴다.
-    반환: {"updated": int, "skipped": [{"id", "artist", "title", "existing": dict}]}
+    - edits 에 없는 항목은 현재 값을 유지한다.
+    - 수정 결과가 다른 곡(이번에 함께 바뀌는 곡 포함)과 같은 곡이 되거나 제목이 비면 그 곡만 건너뛴다.
+    반환: {"updated": int, "skipped": [{"id", "artist", "title", "existing": dict | None}]}
     """
     skipped, to_apply = [], []
     with engine.begin() as conn:
-        rows = conn.execute(select(songs.c.id, songs.c.artist, songs.c.title, songs.c.status,
-                                   songs.c.norm_key)).all()
+        rows = conn.execute(select(songs.c.id, songs.c.artist, songs.c.title, songs.c.language,
+                                   songs.c.youtube_url, songs.c.status, songs.c.norm_key)).all()
         info = {r.id: r for r in rows}
         owner = {r.norm_key: r.id for r in rows}
-        for f in fixes:
-            sid, artist, title = f["id"], (f.get("artist") or "").strip(), (f.get("title") or "").strip()
+        shown = {r.id: {"artist": r.artist, "title": r.title, "status": r.status} for r in rows}  # 겹침 안내용 '현재' 이름
+        for e in edits:
+            sid = e["id"]
             old = info.get(sid)
-            if not old or not title:
+            if not old:
+                continue
+            artist = (e["artist"] if "artist" in e else old.artist or "").strip()
+            title = (e["title"] if "title" in e else old.title or "").strip()
+            lang = e.get("language") or old.language or "기타"
+            url = ((e["youtube_url"] if "youtube_url" in e else old.youtube_url) or "").strip() or None
+            if not title:
+                skipped.append({"id": sid, "artist": artist, "title": title, "existing": None})
                 continue
             key, swapped = keys_for(artist, title)
             clash = next((owner[k] for k in (key, swapped) if k in owner and owner[k] != sid), None)
             if clash is not None:
-                c = info[clash]
-                skipped.append({"id": sid, "artist": artist, "title": title,
-                                "existing": {"artist": c.artist, "title": c.title, "status": c.status}})
+                skipped.append({"id": sid, "artist": artist, "title": title, "existing": dict(shown[clash])})
                 continue
             if owner.get(old.norm_key) == sid:
                 del owner[old.norm_key]
             owner[key] = sid
-            to_apply.append({"b_id": sid, "b_artist": artist, "b_title": title, "b_key": key})
+            shown[sid].update(artist=artist, title=title)
+            to_apply.append({"b_id": sid, "b_artist": artist, "b_title": title, "b_lang": lang,
+                             "b_url": url, "b_key": key})
         if to_apply:
             conn.execute(
                 update(songs).where(songs.c.id == bindparam("b_id")).values(
-                    artist=bindparam("b_artist"), title=bindparam("b_title"), norm_key=bindparam("b_key")),
+                    artist=bindparam("b_artist"), title=bindparam("b_title"), language=bindparam("b_lang"),
+                    youtube_url=bindparam("b_url"), norm_key=bindparam("b_key")),
                 to_apply)
     return {"updated": len(to_apply), "skipped": skipped}
+
+
+def apply_name_fixes(engine: Engine, fixes: list[dict]) -> dict:
+    """가수/제목만 일괄 수정 (일괄 정리용). fixes: [{id, artist, title}]."""
+    return update_songs_bulk(engine, [{"id": f["id"], "artist": f.get("artist"), "title": f.get("title")}
+                                      for f in fixes])
 
 
 def delete_songs(engine: Engine, ids: list[int]) -> int:

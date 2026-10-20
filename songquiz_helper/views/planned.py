@@ -41,9 +41,8 @@ def render():
     no_artist = st.checkbox("가수가 비어 있는 곡만 보기", key="planned_no_artist")
     if no_artist:
         rows = [r for r in rows if not (r["artist"] or "").strip()]
-    st.caption(f"{len(rows)}곡 · 표에서 곡을 선택하면 아래에서 수정/삭제할 수 있어요")
-    ids = common.select_table(rows, f"planned_tbl_{common.ver('planned')}_{flang}_{no_artist}", with_pack=True)
-    common.render_edit(engine, rows, ids)
+    st.caption(f"{len(rows)}곡")
+    ids = common.song_editor(engine, rows, f"planned_tbl_{common.ver('planned')}_{flang}_{no_artist}", with_pack=True)
 
     if ids:
         st.write(f"선택한 곡 {len(ids)}곡")

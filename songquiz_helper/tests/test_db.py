@@ -114,3 +114,25 @@ def test_history_saves_reason_and_migrates_old_schema(tmp_path):
     by = {h["title"]: h for h in db.list_history(eng)}
     assert by["옛곡"]["reason"] is None and by["T"]["reason"] == "취향 저격"
     db.make_engine(url)  # 이미 컬럼이 있어도 다시 열 수 있다 (멱등)
+
+
+def test_update_songs_bulk(eng):
+    db.add_songs_bulk(eng, [{"artist": "A", "title": "one", "language": "en"},
+                            {"artist": "B", "title": "two", "language": "en"},
+                            {"artist": "C", "title": "three", "language": "en"}], "used")
+    ids = {s["title"]: s["id"] for s in db.list_songs(eng)}
+    res = db.update_songs_bulk(eng, [
+        {"id": ids["one"], "artist": "아이유", "title": "좋은 날", "language": "ko", "youtube_url": " http://y "},
+        {"id": ids["two"], "language": "ja"},                     # 언어만 변경, 나머지는 유지
+        {"id": ids["three"], "artist": "아이유", "title": "좋은 날"},  # 위에서 바뀐 곡과 같아짐 → 건너뜀
+    ])
+    assert res["updated"] == 2 and len(res["skipped"]) == 1 and res["skipped"][0]["existing"]["title"] == "좋은 날"
+    by = {s["id"]: s for s in db.list_songs(eng)}
+    assert (by[ids["one"]]["artist"], by[ids["one"]]["language"], by[ids["one"]]["youtube_url"]) == ("아이유", "ko", "http://y")
+    assert (by[ids["two"]]["artist"], by[ids["two"]]["title"], by[ids["two"]]["language"]) == ("B", "two", "ja")
+    assert by[ids["three"]]["artist"] == "C"
+    # 수정 후 새 표기로 중복 판별
+    assert not db.add_song(eng, "아이유", "좋은 날 (Live)", "ko", "used")["added"]
+    # 제목을 비우면 그 곡만 건너뜀
+    r2 = db.update_songs_bulk(eng, [{"id": ids["two"], "title": "  "}])
+    assert r2["updated"] == 0 and r2["skipped"][0]["existing"] is None

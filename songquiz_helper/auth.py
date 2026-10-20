@@ -11,7 +11,6 @@ import hmac
 import time
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 from config import get_secret
 
@@ -41,17 +40,15 @@ def verify_token(secret: str, token: str | None, now: float | None = None) -> bo
 
 # ---------------------------------------------------------------- 쿠키 입출력
 def _run_js_cookie(value: str, max_age: int) -> None:
-    """브라우저 쿠키를 설정(또는 max_age=0 으로 삭제). 보이지 않는 작은 컴포넌트로 실행."""
-    components.html(
-        f"""<script>
-        try {{
-          var p = window.parent;
-          var secure = p.location.protocol === 'https:' ? '; Secure' : '';
-          p.document.cookie = "{COOKIE_NAME}={value}; Max-Age={max_age}; Path=/; SameSite=Lax" + secure;
-        }} catch (e) {{}}
-        </script>""",
-        height=0,
-    )
+    """브라우저 쿠키를 설정(또는 max_age=0 으로 삭제)하는 자바스크립트를 한 번 실행한다."""
+    cookie = (f"{COOKIE_NAME}={value}; Max-Age={max_age}; Path=/; SameSite=Lax"
+              + "' + (location.protocol === 'https:' ? '; Secure' : '') + '")
+    script = f"<script>document.cookie = '{cookie}';</script>"
+    try:
+        st.html(script, unsafe_allow_javascript=True)  # 앱 문서에서 직접 실행 (최신 Streamlit)
+    except TypeError:  # unsafe_allow_javascript 가 없는 오래된 Streamlit: 기존 iframe 방식으로 대체
+        import streamlit.components.v1 as components
+        components.html(script.replace("document.cookie", "window.parent.document.cookie"), height=0)
 
 
 def _cookie_token() -> str | None:

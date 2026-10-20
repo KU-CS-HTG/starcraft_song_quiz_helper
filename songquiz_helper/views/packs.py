@@ -58,8 +58,8 @@ def render():
     rows = db.list_songs(engine, status="planned", pack_no=sel, newest_first=False)
     st.progress(min(len(rows) / PACK_SIZE, 1.0), text=f"{sel}번 팩 {len(rows)}/{PACK_SIZE}")
     st.caption("언어 비율: " + _ratio_text(rows))
-    ids = common.select_table(rows, f"pack_tbl_{common.ver('packs')}_{common.ver('planned')}_{sel}")
-    common.render_edit(engine, rows, ids)
+    ids = common.song_editor(engine, rows, f"pack_tbl_{common.ver('packs')}_{common.ver('planned')}_{sel}",
+                             with_pack=True)
 
     if ids:
         st.write(f"선택한 곡 {len(ids)}곡")

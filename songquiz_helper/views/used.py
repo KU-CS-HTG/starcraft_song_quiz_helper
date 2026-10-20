@@ -125,9 +125,8 @@ def render():
                             help="TXT 에서 ' - ' 구분이 없어 가수가 분리되지 않은 곡을 찾을 때 사용하세요.")
     if no_artist:
         rows = [r for r in rows if not (r["artist"] or "").strip()]
-    st.caption(f"{len(rows)}곡 · 표에서 곡을 선택하면 아래에서 수정/삭제할 수 있어요")
-    ids = common.select_table(rows, f"used_tbl_{common.ver('used')}_{f1}_{kw}_{no_artist}")
-    common.render_edit(engine, rows, ids)
+    st.caption(f"{len(rows)}곡")
+    ids = common.song_editor(engine, rows, f"used_tbl_{common.ver('used')}_{f1}_{kw}_{no_artist}")
 
     if ids:
         st.write(f"선택한 곡 {len(ids)}곡")
